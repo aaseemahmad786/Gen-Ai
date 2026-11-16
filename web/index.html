@@ -23,7 +23,10 @@
         <button class="nav-link active"><span class="nav-icon">✳</span> Chat studio</button>
         <button class="nav-link" id="focusModel"><span class="nav-icon">◈</span> Model settings</button>
         <div class="history-wrap">
-          <div class="side-label history-label">RECENT</div>
+          <div class="side-label history-label">
+            <span>RECENT</span>
+            <button class="clear-all-btn" id="clearAllChats" title="Clear all history">Clear all</button>
+          </div>
           <div id="historyList" class="history-list"><div class="history-empty">Your conversations will appear here.</div></div>
         </div>
         <div class="sidebar-bottom">
@@ -37,7 +40,11 @@
         <header class="topbar">
           <button class="icon-button menu-button" id="openSidebar" aria-label="Open menu"><span>☰</span></button>
           <div class="breadcrumb"><span>Workspace</span><span class="crumb-slash">/</span><strong>Chat studio</strong></div>
-          <div class="topbar-right"><span class="local-tag"><span class="tiny-dot"></span> Private mode</span><button class="icon-button settings-button" id="openSettings" aria-label="Open model settings">⚙</button></div>
+          <div class="topbar-right">
+            <span class="local-tag"><span class="tiny-dot"></span> Private mode</span>
+            <button class="icon-button" id="exportChat" title="Export conversation as Markdown" aria-label="Export conversation">⤓</button>
+            <button class="icon-button settings-button" id="openSettings" aria-label="Open model settings">⚙</button>
+          </div>
         </header>
 
         <section class="workspace">
@@ -70,7 +77,14 @@
           <div class="composer-area">
             <div class="composer" id="composerBox">
               <textarea id="promptInput" rows="1" placeholder="Message your AI…" aria-label="Message your AI"></textarea>
-              <div class="composer-bottom"><div class="composer-tools"><button class="tool-button" id="systemPromptButton"><span>☷</span> Instructions</button><span class="tool-divider"></span><span class="hint">Enter to send <kbd>↵</kbd></span></div><button class="send-button" id="sendButton" aria-label="Send message"><span>↑</span></button></div>
+              <div class="composer-bottom">
+                <div class="composer-tools">
+                  <button class="tool-button" id="systemPromptButton"><span>☷</span> Instructions</button>
+                  <span class="tool-divider"></span>
+                  <span class="hint">Enter to send <kbd>↵</kbd></span>
+                </div>
+                <button class="send-button" id="sendButton" aria-label="Send message"><span>↑</span></button>
+              </div>
             </div>
             <div class="composer-caption">AI can make mistakes. Review important information.</div>
           </div>
@@ -78,13 +92,58 @@
       </main>
 
       <aside class="settings-panel" id="settingsPanel">
-        <div class="settings-head"><div><div class="settings-overline">CONFIGURATION</div><h2>Model settings</h2></div><button class="icon-button" id="closeSettings" aria-label="Close settings">×</button></div>
-        <div class="setting-block"><label class="setting-label" for="providerSelect">Provider</label><div class="select-wrap"><select id="providerSelect" aria-label="Provider"></select><span class="select-chevron">⌄</span></div><div class="setting-note" id="providerNote">Checking available API keys…</div></div>
-        <div class="setting-block"><label class="setting-label" for="modelInput">Model</label><input id="modelInput" class="text-input" autocomplete="off" spellcheck="false" /><div class="setting-note">Model names can be changed to any ID supported by your provider.</div></div>
-        <div class="setting-block"><label class="setting-label" for="temperatureInput">Creativity <span id="temperatureValue">0.7</span></label><input id="temperatureInput" class="range-input" type="range" min="0" max="2" step="0.1" value="0.7" /><div class="range-labels"><span>Focused</span><span>Balanced</span><span>Creative</span></div><div class="setting-note" id="temperatureNote">Adjust how focused or varied the response should be.</div></div>
+        <div class="settings-head">
+          <div>
+            <div class="settings-overline">CONFIGURATION</div>
+            <h2>Model settings</h2>
+          </div>
+          <button class="icon-button" id="closeSettings" aria-label="Close settings">×</button>
+        </div>
+        <div class="setting-block">
+          <label class="setting-label" for="providerSelect">Provider</label>
+          <div class="select-wrap">
+            <select id="providerSelect" aria-label="Provider"></select>
+            <span class="select-chevron">⌄</span>
+          </div>
+          <div class="setting-note" id="providerNote">Checking available API keys…</div>
+        </div>
+        <div class="setting-block">
+          <label class="setting-label" for="modelPresetSelect">Model Presets</label>
+          <div class="select-wrap">
+            <select id="modelPresetSelect" aria-label="Model Presets"></select>
+            <span class="select-chevron">⌄</span>
+          </div>
+          <div id="customModelWrap" style="margin-top: 8px;">
+            <label class="setting-label" for="modelInput" style="margin-bottom: 5px;">Custom Model ID</label>
+            <input id="modelInput" class="text-input" autocomplete="off" spellcheck="false" placeholder="Enter model identifier" />
+          </div>
+          <div class="setting-note">Select a preset or customize the exact model string.</div>
+        </div>
+        <div class="setting-block">
+          <label class="setting-label" for="temperatureInput">Creativity <span id="temperatureValue">0.7</span></label>
+          <input id="temperatureInput" class="range-input" type="range" min="0" max="2" step="0.1" value="0.7" />
+          <div class="range-labels"><span>Focused</span><span>Balanced</span><span>Creative</span></div>
+          <div class="setting-note" id="temperatureNote">Adjust how focused or varied the response should be.</div>
+        </div>
         <div class="settings-divider"></div>
-        <div class="setting-block system-setting"><label class="setting-label" for="systemPrompt">Instructions</label><textarea id="systemPrompt" class="system-textarea" placeholder="Set a tone, role, or goal for the assistant…"></textarea><div class="setting-note">These instructions apply to this conversation.</div></div>
-        <div class="settings-footer"><div class="settings-security"><span>⌑</span><div><strong>Keys stay private</strong><small>Stored in server environment variables</small></div></div><button class="done-button" id="doneSettings">Done</button></div>
+        <div class="setting-block system-setting">
+          <label class="setting-label" for="systemPrompt">Instructions</label>
+          <div class="system-presets" id="systemPresets">
+            <button type="button" class="preset-tag active" data-preset="">Default</button>
+            <button type="button" class="preset-tag" data-preset="You are an expert software engineer. Provide concise, production-ready code with clean syntax and minimal boilerplate.">Code Expert</button>
+            <button type="button" class="preset-tag" data-preset="Explain concepts simply and clearly with relatable real-world analogies.">Explainer</button>
+            <button type="button" class="preset-tag" data-preset="Be direct and concise. Deliver answers directly without conversational filler.">Concise</button>
+          </div>
+          <textarea id="systemPrompt" class="system-textarea" placeholder="Set a tone, role, or goal for the assistant…"></textarea>
+          <div class="setting-note">These instructions apply to this conversation.</div>
+        </div>
+        <div class="settings-footer">
+          <div class="settings-security">
+            <span>⌑</span>
+            <div><strong>Keys stay private</strong><small>Stored in server environment variables</small></div>
+          </div>
+          <button class="done-button" id="doneSettings">Done</button>
+        </div>
       </aside>
     </div>
     <div class="toast" id="toast" role="status"></div>

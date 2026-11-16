@@ -28,3 +28,195 @@
 @keyframes floatCube{0%,100%{transform:rotateX(24deg) rotateY(-31deg) rotateZ(18deg) translate3d(0,0,27px)}50%{transform:rotateX(34deg) rotateY(-18deg) rotateZ(23deg) translate3d(1px,-4px,32px)}}
 @media(max-width:720px){.welcome-orb{margin-bottom:18px}.scene-sphere{left:6px}.scene-cube{right:6px}}
 @media(prefers-reduced-motion:reduce){.welcome-orb,.orb-core,.orbit-one,.orbit-two,.scene-sphere,.scene-cube{animation:none!important}.suggestion{transition:none}}
+
+/* Markdown & Code Block Styling */
+.message-content h1, .message-content h2, .message-content h3, .message-content h4 {
+  margin: 12px 0 6px;
+  color: #2b3040;
+  font-family: var(--font-display);
+}
+.message-content h1 { font-size: 16px; }
+.message-content h2 { font-size: 14px; }
+.message-content h3 { font-size: 13px; }
+.message-content p { margin: 0 0 8px; }
+.message-content p:last-child { margin-bottom: 0; }
+.message-content ul, .message-content ol { margin: 4px 0 8px 20px; padding: 0; }
+.message-content li { margin-bottom: 4px; }
+.message-content blockquote {
+  margin: 6px 0 10px;
+  padding: 6px 12px;
+  border-left: 3px solid #716bdc;
+  background: #f8f8fc;
+  color: #555d70;
+  font-style: italic;
+  border-radius: 0 4px 4px 0;
+}
+.message-content code.inline-code {
+  background: #eceef4;
+  color: #544cb4;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+.message.user .message-content code.inline-code {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+.code-block {
+  margin: 10px 0;
+  border-radius: 8px;
+  background: #1e222d;
+  color: #e2e6f0;
+  overflow: hidden;
+  border: 1px solid #2e3547;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: #171a23;
+  border-bottom: 1px solid #2e3547;
+  font-size: 10px;
+  color: #8c94a8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.code-header .copy-code-btn {
+  border: 0;
+  background: transparent;
+  color: #9ea7bd;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.code-header .copy-code-btn:hover {
+  background: #2b3142;
+  color: #fff;
+}
+.code-block pre {
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.code-block code {
+  font-family: inherit;
+  color: inherit;
+}
+.message-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.action-btn {
+  border: 0;
+  background: transparent;
+  color: #9ca2b0;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.action-btn:hover {
+  background: #f0efff;
+  color: #6e68d7;
+}
+
+/* History delete item and clear all */
+.history-item-wrap {
+  display: flex;
+  align-items: center;
+  position: relative;
+  border-radius: 7px;
+}
+.history-item-wrap:hover {
+  background: #f2f3f8;
+}
+.history-item-wrap .history-item {
+  flex: 1;
+  min-width: 0;
+}
+.history-item-wrap:hover .history-item {
+  background: transparent;
+}
+.delete-chat-btn {
+  border: 0;
+  background: transparent;
+  color: #a4a9b6;
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  display: none;
+  cursor: pointer;
+}
+.history-item-wrap:hover .delete-chat-btn {
+  display: block;
+}
+.delete-chat-btn:hover {
+  color: #dc4b4b;
+}
+.clear-all-btn {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: #a4a9b6;
+  font-size: 9px;
+  cursor: pointer;
+  padding: 0;
+}
+.clear-all-btn:hover {
+  color: #dc4b4b;
+}
+.history-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Instruction Presets */
+.system-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+.preset-tag {
+  border: 1px solid #e2e4ec;
+  background: #fff;
+  color: #6c7384;
+  font-size: 9px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.preset-tag:hover {
+  border-color: #beb9f2;
+  color: #6059d2;
+}
+.preset-tag.active {
+  background: #efefff;
+  border-color: #8c85eb;
+  color: #554dc9;
+  font-weight: 600;
+}
+
+/* Stop button state for composer */
+.send-button.stop-btn {
+  background: #e15555;
+  box-shadow: 0 3px 8px #e1555540;
+}
+.send-button.stop-btn:hover {
+  background: #c94444;
+}

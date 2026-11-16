@@ -9,47 +9,45 @@ import os
 import threading
 import urllib.error
 import urllib.request
+from collections.abc import Generator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
-from langchain_openai import ChatOpenAI
 
 
 ROOT = Path(__file__).resolve().parent
 WEB_ROOT = ROOT / "web"
 
 PROVIDERS: dict[str, dict[str, Any]] = {
-    "openai": {
-        "name": "OpenAI",
-        "env": ("OPENAI_API_KEY",),
-        "model": "gpt-5-nano",
+    "google": {
+        "name": "Gemini",
+        "env": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+        "default_model": "gemini-3.1-flash-lite",
+        "models": [
+            "gemini-3.1-flash-lite",
+            "gemini-3.5-flash-lite",
+        ],
     },
     "groq": {
         "name": "Groq",
         "env": ("GROQ_API_KEY",),
-        "model": "openai/gpt-oss-20b",
+        "default_model": "qwen/qwen3.8-27b",
+        "models": [
+            "qwen/qwen3.8-27b",
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+            "allam-2-7b",
+        ],
         "endpoint": "https://api.groq.com/openai/v1/chat/completions",
-    },
-    "google": {
-        "name": "Gemini",
-        "env": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
-        "model": "gemini-4-hydrogen",
-    },
-    "huggingface": {
-        "name": "Hugging Face",
-        "env": ("HUGGINGFACEHUB_ACCESS_TOKEN", "HF_TOKEN"),
-        "model": "openai/gpt-oss-120b",
-        "endpoint": "https://router.huggingface.co/v1/chat/completions",
     },
 }
 
 
-def load_dotenv() -> None:
-    """Load simple KEY=value entries without overwriting the process environment."""
+def load_dotenv(override: bool = False) -> None:
+    """Load simple KEY=value entries from .env."""
     env_path = ROOT / ".env"
     if not env_path.exists():
         return
@@ -61,7 +59,7 @@ def load_dotenv() -> None:
         key, value = key.strip(), value.strip()
         if value.startswith(("'", '"')) and value.endswith(("'", '"')):
             value = value[1:-1]
-        if key and key not in os.environ:
+        if key and (override or key not in os.environ):
             os.environ[key] = value
 
 
@@ -74,51 +72,95 @@ APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
 
 
 def get_api_key(provider: str) -> str | None:
-    for name in PROVIDERS[provider]["env"]:
+    load_dotenv(override=True)
+    env_vars = PROVIDERS.get(provider, {}).get("env", ())
+    if not env_vars:
+        return "not-required"  # local providers like Ollama
+    for name in env_vars:
         key = os.environ.get(name, "").strip()
         if key and not key.lower().startswith(("your_", "replace_me", "add_")):
             return key
     return None
 
 
-def request_json(url: str, payload: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
+def extract_http_error(exc: urllib.error.HTTPError) -> str:
+    try:
+        raw_body = exc.read().decode("utf-8", "replace")
+        details = json.loads(raw_body)
+        if isinstance(details, dict):
+            err = details.get("error")
+            if isinstance(err, dict):
+                msg = err.get("message")
+                if msg:
+                    return str(msg)
+            elif isinstance(err, str):
+                return err
+            if details.get("message"):
+                return str(details["message"])
+    except Exception:
+        pass
+    if exc.code in {401, 403}:
+        return f"Authentication failed (HTTP {exc.code}). Verify your API key in .env."
+    if exc.code == 404:
+        return f"Model or endpoint not found (HTTP 404). Check the model identifier."
+    if exc.code == 429:
+        return f"Rate limit or quota exceeded (HTTP 429). Check your provider credits/limits."
+    return f"Provider returned HTTP {exc.code}."
+
+
+def stream_openai_compatible(
+    endpoint: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+) -> Generator[str, None, None]:
+    payload["stream"] = True
     body = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        url,
+    req_headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "GenAIWorkbench/1.1 (Windows; Python)",
+        **headers,
+    }
+    req = urllib.request.Request(
+        endpoint,
         data=body,
-        headers={"Content-Type": "application/json", **headers},
+        headers=req_headers,
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            return json.loads(response.read().decode("utf-8"))
+        with urllib.request.urlopen(req, timeout=120) as response:
+            for raw_line in response:
+                line = raw_line.decode("utf-8").strip()
+                if not line or not line.startswith("data: "):
+                    continue
+                data_str = line[6:].strip()
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk_obj = json.loads(data_str)
+                    choices = chunk_obj.get("choices", [])
+                    if choices:
+                        delta = choices[0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            yield content
+                except json.JSONDecodeError:
+                    continue
     except urllib.error.HTTPError as exc:
-        raw_body = exc.read().decode("utf-8", "replace")
-        try:
-            details = json.loads(raw_body)
-            message = details.get("error", {}).get("message") or details.get("message")
-        except (ValueError, AttributeError):
-            message = None
-        if not message and exc.code in {401, 403}:
-            message = f"Provider rejected this API key or it lacks permission for this API/model (HTTP {exc.code}). Check the key and model access in your provider account."
-        message = message or f"Provider returned HTTP {exc.code}."
-        raise RuntimeError(message) from None
+        raise RuntimeError(extract_http_error(exc)) from None
     except TimeoutError:
-        raise RuntimeError("The model provider did not respond within 120 seconds. Try again or choose another model/provider.") from None
+        raise RuntimeError("Provider timed out after 120s.") from None
     except urllib.error.URLError as exc:
         reason = getattr(exc, "reason", exc)
-        raise RuntimeError(f"Could not reach the model provider: {reason}") from None
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        raise RuntimeError("The provider returned an unreadable response.") from None
+        raise RuntimeError(f"Could not reach provider: {reason}") from None
 
 
-def generate_reply(
+def stream_reply(
     provider: str,
     model: str,
     messages: list[dict[str, str]],
     system_prompt: str,
     temperature: float,
-) -> str:
+) -> Generator[str, None, None]:
     if provider not in PROVIDERS:
         raise ValueError("Choose a supported provider.")
     api_key = get_api_key(provider)
@@ -135,6 +177,8 @@ def generate_reply(
     if not safe_messages or safe_messages[-1]["role"] != "user":
         raise ValueError("Send a user message to start a response.")
 
+    model_clean = model.strip()
+
     if provider == "google":
         langchain_messages = []
         if system_prompt.strip():
@@ -146,101 +190,62 @@ def generate_reply(
         )
         try:
             chat_model = ChatGoogleGenerativeAI(
-                model=model.strip(),
+                model=model_clean,
                 google_api_key=api_key,
                 max_tokens=None,
                 timeout=120,
                 max_retries=2,
                 temperature=temperature,
             )
-            result = chat_model.invoke(langchain_messages)
+            for chunk in chat_model.stream(langchain_messages):
+                text = chunk.content
+                if isinstance(text, list):
+                    text = "".join(part.get("text", "") for part in text if isinstance(part, dict))
+                elif not isinstance(text, str):
+                    text = str(text) if text is not None else ""
+                if text:
+                    yield text
         except Exception as exc:
             raise RuntimeError(f"Gemini request failed: {exc}") from None
-        content = result.content
-        if isinstance(content, list):
-            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
-        if not isinstance(content, str) or not content.strip():
-            raise RuntimeError("Gemini returned no text. Try another model or prompt.")
-        return content.strip()
+        return
 
-    if provider == "openai":
-        langchain_messages = []
-        if system_prompt.strip():
-            langchain_messages.append(SystemMessage(content=system_prompt[:4000]))
-        langchain_messages.extend(
-            HumanMessage(content=item["content"]) if item["role"] == "user"
-            else AIMessage(content=item["content"])
-            for item in safe_messages
-        )
-        try:
-            chat_model = ChatOpenAI(
-                model=model.strip(),
-                api_key=api_key,
-                max_tokens=None,
-                timeout=120,
-                max_retries=2,
-                temperature=None if model.strip().lower().startswith("gpt-5") else temperature,
-            )
-            result = chat_model.invoke(langchain_messages)
-        except Exception as exc:
-            raise RuntimeError(f"OpenAI request failed: {exc}") from None
-        content = result.content
-        if isinstance(content, list):
-            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
-        if not isinstance(content, str) or not content.strip():
-            raise RuntimeError("OpenAI returned no text. Try another model or prompt.")
-        return content.strip()
-
-    if provider == "huggingface":
-        langchain_messages = []
-        if system_prompt.strip():
-            langchain_messages.append(SystemMessage(content=system_prompt[:4000]))
-        langchain_messages.extend(
-            HumanMessage(content=item["content"]) if item["role"] == "user"
-            else AIMessage(content=item["content"])
-            for item in safe_messages
-        )
-        try:
-            endpoint = HuggingFaceEndpoint(
-                repo_id=model.strip(),
-                task="text-generation",
-                huggingfacehub_api_token=api_key,
-                max_new_tokens=1024,
-                temperature=temperature,
-                do_sample=temperature > 0,
-                timeout=120,
-            )
-            chat_model = ChatHuggingFace(llm=endpoint)
-            result = chat_model.invoke(langchain_messages)
-        except Exception as exc:
-            raise RuntimeError(f"Hugging Face request failed: {exc}") from None
-        content = result.content
-        if isinstance(content, list):
-            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
-        if not isinstance(content, str) or not content.strip():
-            raise RuntimeError("Hugging Face returned no text. Try another model or prompt.")
-        return content.strip()
+    # Providers using OpenAI-compatible HTTP chat completions (Groq)
+    endpoint = PROVIDERS[provider]["endpoint"]
+    headers: dict[str, str] = {}
+    if api_key and api_key != "not-required":
+        headers["Authorization"] = f"Bearer {api_key}"
 
     chat_messages = []
     if system_prompt.strip():
         chat_messages.append({"role": "system", "content": system_prompt[:4000]})
     chat_messages.extend(safe_messages)
-    payload = {"model": model.strip(), "messages": chat_messages, "temperature": temperature}
-    endpoint = PROVIDERS[provider]["endpoint"]
-    result = request_json(endpoint, payload, {"Authorization": f"Bearer {api_key}"})
-    try:
-        content = result["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError):
-        raise RuntimeError("The provider returned no text. Check the model name and try again.") from None
-    if isinstance(content, list):
-        content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
-    if not isinstance(content, str) or not content.strip():
-        raise RuntimeError("The provider returned an empty response.")
-    return content.strip()
+
+    payload = {
+        "model": model_clean,
+        "messages": chat_messages,
+        "temperature": temperature,
+    }
+    yield from stream_openai_compatible(endpoint, payload, headers)
+
+
+def generate_reply(
+    provider: str,
+    model: str,
+    messages: list[dict[str, str]],
+    system_prompt: str,
+    temperature: float,
+) -> str:
+    chunks: list[str] = []
+    for chunk in stream_reply(provider, model, messages, system_prompt, temperature):
+        chunks.append(chunk)
+    result = "".join(chunks).strip()
+    if not result:
+        raise RuntimeError("Provider returned an empty response. Try another model or prompt.")
+    return result
 
 
 class AppHandler(BaseHTTPRequestHandler):
-    server_version = "GenAIWorkbench/1.0"
+    server_version = "GenAIWorkbench/1.1"
 
     def log_message(self, fmt: str, *args: Any) -> None:
         print(f"[{self.log_date_time_string()}] {fmt % args}")
@@ -255,7 +260,6 @@ class AppHandler(BaseHTTPRequestHandler):
         try:
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
-            # A browser may close a long-running request before the provider replies.
             pass
 
     def authorize(self) -> bool:
@@ -287,17 +291,24 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/config":
             configured = {provider: bool(get_api_key(provider)) for provider in PROVIDERS}
-            first_ready = "google" if configured["google"] else next(
-                (provider for provider, ready in configured.items() if ready), None
+            # Prefer google or first configured provider
+            first_ready = "google" if configured.get("google") else next(
+                (p for p, ready in configured.items() if ready), "groq"
             )
             self.send_json(
                 200,
                 {
                     "providers": {
-                        provider: {"name": config["name"], "model": config["model"], "configured": configured[provider]}
+                        provider: {
+                            "name": config["name"],
+                            "default_model": config["default_model"],
+                            "models": config.get("models", [config["default_model"]]),
+                            "configured": configured[provider],
+                            "is_local": len(config.get("env", ())) == 0,
+                        }
                         for provider, config in PROVIDERS.items()
                     },
-                    "default_provider": first_ready or "openai",
+                    "default_provider": first_ready,
                 },
             )
             return
@@ -310,7 +321,12 @@ class AppHandler(BaseHTTPRequestHandler):
         if not candidate.is_file():
             self.send_error(404)
             return
-        content_type = "text/html; charset=utf-8" if candidate.suffix == ".html" else "text/css; charset=utf-8" if candidate.suffix == ".css" else "text/javascript; charset=utf-8"
+        content_type = (
+            "text/html; charset=utf-8" if candidate.suffix == ".html"
+            else "text/css; charset=utf-8" if candidate.suffix == ".css"
+            else "text/javascript; charset=utf-8" if candidate.suffix == ".js"
+            else "application/octet-stream"
+        )
         body = candidate.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", content_type)
@@ -322,7 +338,7 @@ class AppHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         if not self.authorize():
             return
-        if self.path != "/api/chat":
+        if self.path not in {"/api/chat", "/api/chat/stream"}:
             self.send_json(404, {"error": "Unknown endpoint."})
             return
         try:
@@ -337,20 +353,45 @@ class AppHandler(BaseHTTPRequestHandler):
             temperature = float(body.get("temperature", 0.7))
             if not isinstance(messages, list) or not 0 <= temperature <= 2:
                 raise ValueError("Messages must be a list and temperature must be between 0 and 2.")
+
+            if self.path == "/api/chat/stream":
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache, no-transform")
+                self.send_header("Connection", "keep-alive")
+                self.send_header("X-Accel-Buffering", "no")
+                self.end_headers()
+
+                try:
+                    for chunk in stream_reply(provider, model, messages, system_prompt, temperature):
+                        payload = json.dumps({"chunk": chunk})
+                        self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
+                        self.wfile.flush()
+                    self.wfile.write(b"data: {\"done\": true}\n\n")
+                    self.wfile.flush()
+                except Exception as exc:
+                    err_payload = json.dumps({"error": str(exc)})
+                    try:
+                        self.wfile.write(f"data: {err_payload}\n\n".encode("utf-8"))
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                        pass
+                return
+
             reply = generate_reply(provider, model, messages, system_prompt, temperature)
             self.send_json(200, {"reply": reply})
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
             self.send_json(400, {"error": str(exc)})
         except RuntimeError as exc:
             self.send_json(502, {"error": str(exc)})
-        except Exception:
-            self.send_json(500, {"error": "Something went wrong while generating a response."})
+        except Exception as exc:
+            self.send_json(500, {"error": f"Server error: {exc}"})
 
 
 def main() -> None:
     server = ThreadingHTTPServer((HOST, PORT), AppHandler)
-    print(f"GenAI Workbench is ready at http://{HOST}:{PORT}")
-    print("Press Ctrl+C to stop.")
+    print(f"GenAI Workbench is ready at http://{HOST}:{PORT}", flush=True)
+    print("Press Ctrl+C to stop.", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
